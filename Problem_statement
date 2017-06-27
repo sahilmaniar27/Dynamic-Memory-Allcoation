@@ -1,0 +1,445 @@
+GENERAL DESCRIPTION
+
+You are to write four memory allocation functions to implement a
+combination of variable-size allocation of memory regions and fixed-
+size allocation of control blocks (nodes) that contain metadata to
+describe the memory regions.
+
+You should write the functions in C, allocating nodes from a fixed-size
+array of node structures and allocating memory regions from a separate
+fixed-size array of bytes. The arrays will be defined in a header file.
+You will manage the memory allocations directly, and you are not allowed
+to call malloc(), new(), or any other library routine to allocate memory
+on your behalf.
+
+In the popular boundary-tag method, memory regions and free-list nodes
+are in the same area of memory. In fact, the metadata for free regions
+in the boundary-tag method is stored inside free regions, and the
+metadata for allocated regions is kept just above and just below the
+allocated regions. Unfortunately, there is no protection to keep memory
+region overflows from overwriting metadata.
+
+For your assignment, we will assume that the metadata nodes for both the
+free and the allocated memory regions is kept in a separate memory area,
+away from the allocated memory regions. A simple approach is to keep all
+the metadata nodes in a single list in the order of each memory region's
+starting address. This ordering of free and allocated memory regions will
+simplify the coalescing logic for free memory regions when a memory region
+releases occur.
+
+A pool of metadata nodes will be kept, and a linear search for a free node
+will suffice. (Since the nodes are all the same size, a bitmap approach
+could be used instead.)
+
+The memory region selection policy will be first-fit using a linear search.
+
+
+GUIDELINES ON PREPARING THE PROGRAM
+
+Turn in only one source file with the four functions. I will have my own
+header file and test driver available to compile and link with your code.
+Please do not submit a compressed source file.
+
+
+DETAILS
+
+Your assignment is to write four functions that implement the memory
+allocations and releases for protected free list management as described
+above. The function prototypes are:
+
+	struct region_node *get_free_node();
+	void return_node( struct region_node * n );
+	unsigned char *alloc( int size );
+	int release( unsigned char *ptr );
+
+get_free_node() has no input parameters. It should search through the
+metadata node array for the first node with the node_state == free and
+return the address of this node. If there are no free nodes then
+get_free_node() should return a NULL pointer.
+
+return_node() takes the address of a metadata node that has been unlinked
+from the memory region list as its input parameter, and it simply
+reinitializes the fields of the node structure:
+
+  void return_node( struct region_node * n ){
+    n->node_state = FREE;
+    n->region_state = FREE;
+    n->start_address = NULL;
+    n->size = 0;
+    n->prev = NULL;
+    n->next = NULL;
+  }
+
+alloc() takes the size for a requested memory allocation as its input
+parameter. The size must be non-negative; otherwise, alloc() immediately
+returns a NULL pointer. For a positive region size, alloc() searches the
+memory region list in order, looking for a free memory region that is 
+equal in size or larger than the requested size. If no such memory region
+is found, alloc() returns a NULL pointer. If a memory region of equal size
+is found, alloc() merely changes the memory region's state in the metadata
+node to IN_USE and returns the starting address of the memory region. If
+the size of the selected memory region is larger than the requested size,
+alloc() must split the existing memory region into an in-use memory region
+of the requested size and a new free memory region of whatever size is
+left over. The in-use memory region always starts at the same address
+as the selected memory region. A new free memory region resulting from a
+split always starts at a higher address. For the new free memory region,
+alloc() must get a free metadata node, link this node into the memory
+region list, and set the other fields of the node to the appropriate
+values. If get_free_node() returns a NULL address, alloc() should
+allocate the complete memory region, even though it is larger than the
+requested size.
+
+release() takes the address of an in-use memory region as its input
+parameter and passes back a return code of 0, 1, or 2, which indicates
+the outcome of the call:
+  0 - the call to release() was successful
+  1 - the input parameter pointed to an existing FREE region
+  2 - the input parameter was either NULL or an address that does not
+      correspond to the staring address of an existing memory region
+
+release() must also coalesce a newly-free memory region into a larger
+free memory region whenever the predecessor and/or successor memory
+region is (are) free. The following diagram shows the four possible
+cases. "rn" is a pointer to the metadata node in the memory region list
+that corresponds to the memory region being released. "pn" is a pointer
+to the previous metadata node in the memory region list, and "nn" is a
+pointer to the next metadata node in the memory region list. None, one,
+or two of the metadata nodes may be returned, depending on how much
+coalescing can be done.
+
+
+        case 1     case 2     case 3     case 4
+       +------+   +------+   +------+   +------+
+  pn-> | FREE |   | FREE |   |IN_USE|   |IN_USE|
+       +------+   +------+   +------+   +------+
+
+       +------+   +------+   +------+   +------+
+  rn-> | FREE |   | FREE |   | FREE |   | FREE |
+       +------+   +------+   +------+   +------+
+
+       +------+   +------+   +------+   +------+
+  nn-> | FREE |   |IN_USE|   | FREE |   |IN_USE|
+       +------+   +------+   +------+   +------+
+
+       coalesce   coalesce   coalesce   all nodes
+        all 3      top 2     bottom 2   remain in
+        nodes      nodes      nodes     the list
+
+       keep pn    keep pn    keep rn
+       as FREE    as FREE    as FREE
+       node in    node in    node in
+        region     region     region
+         list       list       list
+
+       return rn  return rn  return nn
+        and nn
+
+Because metadata nodes may need to be inserted and deleted at various
+places in the memory region list, the memory region list is doubly
+linked. To avoid edge case testing in the coalescing logic to determine
+if a newly-free memory region is the first memory region (and, thus,
+cannot be coalesced with a memory region above) or the last memory region
+(and, thus, cannot coalesced with a memory region below), the memory
+region list is circular and has one dummy node that will always be
+marked as IN_USE.
+
+We will use the following header file "slab.h". You are only allowed to
+change NUM_NODES and MEM_SIZE during your testing. Please note that I
+will use my own header file when grading.
+
+
+#define NUM_NODES 64
+#define MEM_SIZE 100000
+#define FREE 0
+#define IN_USE 1
+
+struct region_node{
+  int node_state, region_state;
+  unsigned char *start_address;
+  int size;
+  struct region_node *prev, *next;
+};
+
+struct region_node *head, node[NUM_NODES];
+unsigned char mem[MEM_SIZE];
+
+struct region_node *get_free_node();
+void return_node( struct region_node * n );
+unsigned char *alloc( int size );
+int release( unsigned char *ptr );
+
+
+EXAMPLE TEST DRIVER
+
+A test driver for the allocation and release functions is:
+
+
+#include <stdio.h>
+#include "pfl.h"
+
+void init_node_pool(){
+  int i;
+  node[0].node_state = IN_USE;          // node 0 is dummy node
+  node[0].region_state = IN_USE;        // always in-use to simplify
+  node[0].start_address = NULL;         //   the coalescing logic
+  node[0].size = 0;
+  node[0].prev = &node[1];
+  node[0].next = &node[1];
+  node[1].node_state = IN_USE;          // node 1 is initial free region
+  node[1].region_state = FREE;
+  node[1].start_address = mem;
+  node[1].size = MEM_SIZE;
+  node[1].prev = &node[0];
+  node[1].next = &node[0];
+  for( i = 2; i < NUM_NODES; i++ ){     // other nodes are available for
+    node[i].node_state = FREE;          //   splitting a free region into
+    node[i].region_state = FREE;        //   an allocated region and a
+    node[i].start_address = NULL;       //   remaining free region
+    node[i].size = 0;
+    node[i].prev = NULL;
+    node[i].next = NULL;
+  }
+  head = &node[0];
+}
+
+void print_regions(){
+  struct region_node *pn;
+  printf("\nregion list - addr NS RS size\n");
+  pn = head->next;
+  while( pn != head ){
+    printf("%p: %d %d %d\n",pn->start_address,pn->node_state,
+      pn->region_state,pn->size);
+    pn = pn->next;
+  }
+  printf("\n");
+}
+
+int main(){
+  int rc;
+  unsigned char *ptr[8];
+
+  init_node_pool();
+
+  print_regions();
+
+/* general test */
+  ptr[0] = alloc( 200 );
+  printf("alloc 200\n");
+  print_regions();
+  rc = release( ptr[0] );
+  printf( "alloc 200, release, expect rc of 0, rc = %d\n", rc );
+  print_regions();
+  rc = release( ptr[0] );
+  printf( "re-release, expect rc of 1, rc = %d\n", rc );
+  print_regions();
+
+/* edge case tests */
+  ptr[0] = alloc( -1 );
+  printf( "alloc -1, expect NULL, ptr = %p\n", ptr[0] );
+  ptr[0] = alloc( 0 );
+  printf( "alloc 0, expect NULL, ptr = %p\n", ptr[0] );
+  rc = release( ptr[0] );
+  printf( "release, expect rc of 2, rc = %d\n", rc );
+  print_regions();
+
+  ptr[0] = alloc( 1 );
+  printf("alloc 1\n");
+  print_regions();
+  rc = release( ptr[0] );
+  printf( "alloc 1, release, expect rc of 0, rc = %d\n", rc );
+  print_regions();
+
+  ptr[0] = alloc( MEM_SIZE );
+  printf("alloc MEM_SIZE\n");
+  print_regions();
+  rc = release( ptr[0] );
+  printf( "alloc MEM_SIZE, release, expect rc of 0, rc = %d\n", rc );
+  print_regions();
+
+  ptr[0] = alloc( MEM_SIZE + 1 );
+  rc = release( ptr[0] );
+  printf( "alloc MEM_SIZE+1, release, expect rc of 2, rc = %d\n", rc );
+  print_regions();
+
+  ptr[0] = alloc( MEM_SIZE );
+  ptr[1] = alloc( 1 );
+  printf( "alloc MEM_SIZE then 1, expect NULL, ptr = %p\n", ptr[1] );
+  rc = release( ptr[0] );
+  print_regions();
+
+
+
+/* coalescing tests */
+
+  ptr[0] = alloc( 256 );
+  ptr[1] = alloc( 256 );
+  ptr[2] = alloc( 256 );
+  ptr[3] = alloc( 256 );
+  ptr[4] = alloc( 256 );
+
+  print_regions();
+  release( ptr[2] );
+  print_regions();
+
+  ptr[2] = alloc( 256 );
+  print_regions();
+  release( ptr[1] );
+  release( ptr[2] );
+  print_regions();
+
+  ptr[1] = alloc( 256 );
+  ptr[2] = alloc( 256 );
+  print_regions();
+  release( ptr[3] );
+  release( ptr[2] );
+  print_regions();
+
+  ptr[2] = alloc( 256 );
+  ptr[3] = alloc( 256 );
+  print_regions();
+  release( ptr[1] );
+  release( ptr[3] );
+  release( ptr[2] );
+  print_regions();
+
+  return 0;
+}
+
+
+When the test driver runs, you should see something like the following.
+Please note that the actual starting address depends on many things,
+and you may see a different starting address, and consequently different
+allocated addresses, when you run your program.
+
+
+region list - addr NS RS size
+0x602080: 1 0 100000
+
+alloc 200
+
+region list - addr NS RS size
+0x602080: 1 1 200
+0x602148: 1 0 99800
+
+alloc 200, release, expect rc of 0, rc = 0
+
+region list - addr NS RS size
+0x602080: 1 0 100000
+
+re-release, expect rc of 1, rc = 1
+
+region list - addr NS RS size
+0x602080: 1 0 100000
+
+alloc -1, expect NULL, ptr = (nil)
+alloc 0, expect NULL, ptr = (nil)
+release, expect rc of 2, rc = 2
+
+region list - addr NS RS size
+0x602080: 1 0 100000
+
+alloc 1
+
+region list - addr NS RS size
+0x602080: 1 1 1
+0x602081: 1 0 99999
+
+alloc 1, release, expect rc of 0, rc = 0
+
+region list - addr NS RS size
+0x602080: 1 0 100000
+
+alloc MEM_SIZE
+
+region list - addr NS RS size
+0x602080: 1 1 100000
+
+alloc MEM_SIZE, release, expect rc of 0, rc = 0
+
+region list - addr NS RS size
+0x602080: 1 0 100000
+
+alloc MEM_SIZE+1, release, expect rc of 2, rc = 2
+
+region list - addr NS RS size
+0x602080: 1 0 100000
+
+alloc MEM_SIZE then 1, expect NULL, ptr = (nil)
+
+region list - addr NS RS size
+0x602080: 1 0 100000
+
+
+region list - addr NS RS size
+0x602080: 1 1 256
+0x602180: 1 1 256
+0x602280: 1 1 256
+0x602380: 1 1 256
+0x602480: 1 1 256
+0x602580: 1 0 98720
+
+
+region list - addr NS RS size
+0x602080: 1 1 256
+0x602180: 1 1 256
+0x602280: 1 0 256
+0x602380: 1 1 256
+0x602480: 1 1 256
+0x602580: 1 0 98720
+
+
+region list - addr NS RS size
+0x602080: 1 1 256
+0x602180: 1 1 256
+0x602280: 1 1 256
+0x602380: 1 1 256
+0x602480: 1 1 256
+0x602580: 1 0 98720
+
+
+region list - addr NS RS size
+0x602080: 1 1 256
+0x602180: 1 0 512
+0x602380: 1 1 256
+0x602480: 1 1 256
+0x602580: 1 0 98720
+
+
+region list - addr NS RS size
+0x602080: 1 1 256
+0x602180: 1 1 256
+0x602280: 1 1 256
+0x602380: 1 1 256
+0x602480: 1 1 256
+0x602580: 1 0 98720
+
+
+region list - addr NS RS size
+0x602080: 1 1 256
+0x602180: 1 1 256
+0x602280: 1 0 512
+0x602480: 1 1 256
+0x602580: 1 0 98720
+
+
+region list - addr NS RS size
+0x602080: 1 1 256
+0x602180: 1 1 256
+0x602280: 1 1 256
+0x602380: 1 1 256
+0x602480: 1 1 256
+0x602580: 1 0 98720
+
+
+region list - addr NS RS size
+0x602080: 1 1 256
+0x602180: 1 0 768
+0x602480: 1 1 256
+0x602580: 1 0 98720
+
+
+Note that the test driver does not test the edge case of running out of
+metadata nodes but not free memory regions. This is a test case that you
+can add (among others). (And you can arrange to test it by using the same
+or smaller value of NUM_NODES.)
